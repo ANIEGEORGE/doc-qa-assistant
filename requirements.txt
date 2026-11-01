@@ -2,3 +2,6 @@ fastapi
 uvicorn[standard]
 sqlalchemy
 psycopg[binary]
+pgvector
+python-multipart
+pypdf
