@@ -124,3 +124,37 @@ def list_chunks(document_id: int, limit: int = 5, db: Session = Depends(get_db))
 def embed_test(text: str = "The maximum age is 25 years"):
     vector = embed_texts([text], "RETRIEVAL_DOCUMENT")[0]
     return {"text": text, "length": len(vector), "first_5_numbers": vector[:5]}
+
+@app.get("/similarity")
+def similarity(a: str, b: str):
+    va, vb = embed_texts([a, b], "RETRIEVAL_DOCUMENT")
+    score = sum(x * y for x, y in zip(va, vb))
+    return {"a": a, "b": b, "similarity": round(score, 3)}
+
+@app.get("/search")
+def search(q: str, k: int = 3, db: Session = Depends(get_db)):
+    try:
+        query_vector = embed_texts([q], "RETRIEVAL_QUERY")[0]
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502, detail=f"Embedding service failed: {type(exc).__name__}"
+        )
+
+    distance = Chunk.embedding.cosine_distance(query_vector)
+    rows = (
+        db.query(Chunk, Document.filename, distance.label("distance"))
+        .join(Document, Document.id == Chunk.document_id)
+        .filter(Chunk.embedding.isnot(None))
+        .order_by(distance)
+        .limit(k)
+        .all()
+    )
+    return [
+        {
+            "document": filename,
+            "page": chunk.page_number,
+            "score": round(1 - dist, 3),
+            "text": chunk.content,
+        }
+        for chunk, filename, dist in rows
+    ]
