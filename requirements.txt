@@ -5,3 +5,4 @@ psycopg[binary]
 pgvector
 python-multipart
 pypdf
+google-genai

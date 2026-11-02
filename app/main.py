@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.chunking import split_text
 from app.db import engine, get_db, init_db
 from app.models import Chunk, Document
+from app.embeddings import embed_texts
 
 UPLOAD_DIR = Path("/code/uploads")
 
@@ -65,8 +66,18 @@ def upload_document(file: UploadFile = File(...), db: Session = Depends(get_db))
             detail="No readable text found (is this a scanned PDF?)",
         )
 
+    try:
+        vectors = embed_texts([c for _, c in pieces], "RETRIEVAL_DOCUMENT")
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502, detail=f"Embedding service failed: {type(exc).__name__}"
+        )
+
     doc = Document(filename=file.filename, page_count=len(pages))
-    doc.chunks = [Chunk(page_number=p, content=c) for p, c in pieces]
+    doc.chunks = [
+        Chunk(page_number=p, content=c, embedding=v)
+        for (p, c), v in zip(pieces, vectors)
+    ]
     db.add(doc)
     db.commit()
     db.refresh(doc)
@@ -107,3 +118,9 @@ def list_chunks(document_id: int, limit: int = 5, db: Session = Depends(get_db))
         {"id": r.id, "page_number": r.page_number, "content": r.content}
         for r in rows
     ]
+
+
+@app.get("/embed-test")
+def embed_test(text: str = "The maximum age is 25 years"):
+    vector = embed_texts([text], "RETRIEVAL_DOCUMENT")[0]
+    return {"text": text, "length": len(vector), "first_5_numbers": vector[:5]}
