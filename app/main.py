@@ -10,6 +10,10 @@ from app.chunking import split_text
 from app.db import engine, get_db, init_db
 from app.models import Chunk, Document
 from app.embeddings import embed_texts
+from app.rag import answer_question, retrieve
+import logging
+
+logger = logging.getLogger("uvicorn.error")
 
 UPLOAD_DIR = Path("/code/uploads")
 
@@ -134,27 +138,38 @@ def similarity(a: str, b: str):
 @app.get("/search")
 def search(q: str, k: int = 3, db: Session = Depends(get_db)):
     try:
-        query_vector = embed_texts([q], "RETRIEVAL_QUERY")[0]
+        return retrieve(db, q, k)
     except Exception as exc:
         raise HTTPException(
-            status_code=502, detail=f"Embedding service failed: {type(exc).__name__}"
+            status_code=502, detail=f"Search failed: {type(exc).__name__}"
         )
 
-    distance = Chunk.embedding.cosine_distance(query_vector)
-    rows = (
-        db.query(Chunk, Document.filename, distance.label("distance"))
-        .join(Document, Document.id == Chunk.document_id)
-        .filter(Chunk.embedding.isnot(None))
-        .order_by(distance)
-        .limit(k)
-        .all()
-    )
-    return [
-        {
-            "document": filename,
-            "page": chunk.page_number,
-            "score": round(1 - dist, 3),
-            "text": chunk.content,
+@app.get("/ask")
+def ask(q: str, k: int = 3, db: Session = Depends(get_db)):
+    try:
+        return answer_question(db, q, k)
+    except Exception as exc:
+        logger.exception("ask failed")
+        raise HTTPException(
+            status_code=502, detail=f"Answering failed: {type(exc).__name__}"
+        )
+
+
+@app.get("/chat-test")
+def chat_test(model: str = ""):
+    from app.embeddings import get_client
+    from app.rag import CHAT_MODEL
+
+    name = model or CHAT_MODEL
+    try:
+        reply = get_client().models.generate_content(
+            model=name, contents="Say hello in five words."
+        )
+        return {"model": name, "ok": True, "reply": reply.text}
+    except Exception as exc:
+        return {
+            "model": name,
+            "ok": False,
+            "error_type": type(exc).__name__,
+            "error": str(exc)[:500],
         }
-        for chunk, filename, dist in rows
-    ]
